@@ -18,6 +18,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var path: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
+    private lateinit var ecuInfoButton: Button
+    private lateinit var ecuInfo: TextView
     private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { startLoggerIfAllowed() }
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -26,12 +28,16 @@ class MainActivity : AppCompatActivity() {
                     live.text = intent.getStringExtra(ObdService.EXTRA_TEXT) ?: ""
                     updateRegenBanner(intent.getBooleanExtra(ObdService.EXTRA_REGEN_ACTIVE,false), intent.getBooleanExtra(ObdService.EXTRA_ENGINE_RUNNING,false))
                 }
+                ObdService.ACTION_ECU_INFO -> {
+                    ecuInfo.text=intent.getStringExtra(ObdService.EXTRA_TEXT)?:"No ECU information"
+                }
                 ObdService.ACTION_STATUS -> {
                     val value=intent.getStringExtra(ObdService.EXTRA_TEXT)?:""
                     status.text=value
                     val logging=value.contains("Logging active",true)||value.contains("Connected",true)
                     startButton.isEnabled=!logging
                     stopButton.isEnabled=logging||value.contains("Starting",true)||value.contains("Scanning",true)
+                    ecuInfoButton.isEnabled=logging
                 }
             }
             intent?.getStringExtra(ObdService.EXTRA_LOG_PATH)?.let { path.text="Logs: $it" }
@@ -40,13 +46,17 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState); setContentView(R.layout.activity_main)
         status=findViewById(R.id.status); live=findViewById(R.id.liveData); regenBanner=findViewById(R.id.regenBanner); path=findViewById(R.id.logPath)
-        startButton=findViewById(R.id.startButton); stopButton=findViewById(R.id.stopButton); stopButton.isEnabled=false
+        startButton=findViewById(R.id.startButton); stopButton=findViewById(R.id.stopButton); ecuInfoButton=findViewById(R.id.ecuInfoButton); ecuInfo=findViewById(R.id.ecuInfo); stopButton.isEnabled=false; ecuInfoButton.isEnabled=false
         startButton.setOnClickListener { requestAndStart() }
-        stopButton.setOnClickListener { stopService(Intent(this,ObdService::class.java)); status.text="Stopped"; startButton.isEnabled=true; stopButton.isEnabled=false }
+        stopButton.setOnClickListener { stopService(Intent(this,ObdService::class.java)); status.text="Stopped"; startButton.isEnabled=true; stopButton.isEnabled=false; ecuInfoButton.isEnabled=false }
+        ecuInfoButton.setOnClickListener {
+            startService(Intent(this,ObdService::class.java).setAction(ObdService.ACTION_READ_ECU_INFO))
+            ecuInfo.text="Reading ECU information..."
+        }
     }
     override fun onStart() {
         super.onStart()
-        val f=IntentFilter().apply { addAction(ObdService.ACTION_STATE); addAction(ObdService.ACTION_STATUS) }
+        val f=IntentFilter().apply { addAction(ObdService.ACTION_STATE); addAction(ObdService.ACTION_STATUS); addAction(ObdService.ACTION_ECU_INFO) }
         if(Build.VERSION.SDK_INT>=33) registerReceiver(receiver,f,RECEIVER_NOT_EXPORTED) else @Suppress("DEPRECATION") registerReceiver(receiver,f)
     }
     override fun onStop(){ unregisterReceiver(receiver); super.onStop() }
