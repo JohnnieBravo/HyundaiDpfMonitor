@@ -8,8 +8,12 @@
 <com.google.android.material.button.MaterialButton android:id="@+id/startButton" style="@style/Widget.MaterialComponents.Button" android:layout_width="0dp" android:layout_height="52dp" android:layout_weight="1" android:layout_marginEnd="6dp" android:text="START" android:textStyle="bold" app:cornerRadius="12dp"/>
 <com.google.android.material.button.MaterialButton android:id="@+id/stopButton" style="@style/Widget.MaterialComponents.Button.OutlinedButton" android:layout_width="0dp" android:layout_height="52dp" android:layout_weight="1" android:layout_marginStart="6dp" android:text="STOP" android:textStyle="bold" app:cornerRadius="12dp"/>
 </LinearLayout>
+<com.google.android.material.button.MaterialButton android:id="@+id/ecuInfoButton" style="@style/Widget.MaterialComponents.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="10dp" android:text="READ ECU INFO" android:textStyle="bold" app:cornerRadius="12dp"/>
 <com.google.android.material.card.MaterialCardView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" app:cardCornerRadius="16dp" app:cardElevation="0dp" app:strokeWidth="1dp">
 <TextView android:id="@+id/liveData" android:layout_width="match_parent" android:layout_height="wrap_content" android:fontFamily="monospace" android:padding="16dp" android:text="Waiting for data..." android:textSize="16sp" android:lineSpacingExtra="2dp"/>
+</com.google.android.material.card.MaterialCardView>
+<com.google.android.material.card.MaterialCardView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" app:cardCornerRadius="16dp" app:cardElevation="0dp" app:strokeWidth="1dp">
+<TextView android:id="@+id/ecuInfo" android:layout_width="match_parent" android:layout_height="wrap_content" android:fontFamily="monospace" android:padding="16dp" android:text="ECU info not read yet." android:textSize="14sp"/>
 </com.google.android.material.card.MaterialCardView>
 <TextView android:id="@+id/logPath" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="Logs:" android:textSize="12sp" android:alpha="0.72"/>
 </LinearLayout></androidx.core.widget.NestedScrollView>
