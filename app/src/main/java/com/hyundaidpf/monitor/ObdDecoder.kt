@@ -23,6 +23,18 @@ object ObdDecoder {
     fun apply018b(response:String,s:DpfState):Boolean{val p=decodeIsoTp(response)?:return false;if(p.size<9||u(p[0])!=0x41||u(p[1])!=0x8B)return false;val st=u(p[3]);s.regenActive=st and 1!=0;s.regenActiveType=st and 2!=0;s.status04=st and 4!=0;s.regenTriggerPct=u(p[4])*100.0/255.0;s.avgRegenTimeMin=(u(p[5])shl 8)or u(p[6]);s.avgRegenDistanceKm=(u(p[7])shl 8)or u(p[8]);s.raw018b=response;return true}
     fun applyEd1d(response:String,s:DpfState):Boolean{val p=decodeIsoTp(response)?:return false;if(p.size<9||u(p[0])!=0x62||u(p[1])!=0xED||u(p[2])!=0x1D)return false;val raw=u(p[7])or(u(p[8])shl 8);s.sootG=raw*256.0/65535.0;s.rawEd1d=response;return true}
     fun applyEd03(response:String,s:DpfState):Boolean{val p=decodeIsoTp(response)?:return false;if(p.size<44||u(p[0])!=0x62||u(p[1])!=0xED||u(p[2])!=0x03)return false;val d=p.copyOfRange(3,p.size);if(d.size<38)return false;s.dpfPressureHpa=i16le(d,13)*0.0829175;s.catalystTempC=temp(d,17);s.dpfTempC=temp(d,19);s.scrTempC=temp(d,21);s.turboTempC=temp(d,23);s.regenAbortedRaw=u(d[37]);s.regenAborted=(u(d[37])and 1)!=0;s.rawEd03=response;return true}
+    fun decodeUdsAscii(response:String,did:Int):String?{
+        val p=decodeIsoTp(response)?:return null
+        if(p.size<3||u(p[0])!=0x62||u(p[1])!=((did ushr 8)and 0xFF)||u(p[2])!=(did and 0xFF))return null
+        val bytes=p.copyOfRange(3,p.size)
+        return bytes.map{u(it).toChar()}.joinToString("").trim { it=='\u0000'||it=='\u00FF'||it.isWhitespace() }.ifBlank{null}
+    }
+    fun decodeObdVin(response:String):String?{
+        val p=decodeIsoTp(response)?:return null
+        if(p.size<3||u(p[0])!=0x49||u(p[1])!=0x02)return null
+        val start=if(p.size>3)3 else return null
+        return p.copyOfRange(start,p.size).map{u(it).toChar()}.joinToString("").filter{it.code in 32..126}.trim().ifBlank{null}
+    }
     private fun u(b:Byte)=b.toInt()and 0xFF
     private fun u16le(d:ByteArray,i:Int)=u(d[i])or(u(d[i+1])shl 8)
     private fun i16le(d:ByteArray,i:Int):Int{val x=u16le(d,i);return if(x>=0x8000)x-0x10000 else x}
