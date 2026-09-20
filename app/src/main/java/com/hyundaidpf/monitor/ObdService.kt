@@ -45,37 +45,62 @@ class ObdService : Service() {
     private var regenCandidate:Boolean?=null
     private var regenCandidateCount=0
     private val regenConfirmSamples=3
+    private var reconnectAttempt=0
+    @Volatile private var reconnectScheduled=false
+    @Volatile private var stopping=false
     private var tts:TextToSpeech?=null; private var ttsReady=false
     private val tone by lazy{ToneGenerator(AudioManager.STREAM_NOTIFICATION,80)}
 
     override fun onCreate(){super.onCreate();btManager=getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager;logger=CsvLogger(this);initTts();createChannel();startForeground(NOTIFICATION_ID,notification("Starting vLinker logger"));sendStatus("Starting");startScan()}
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int)=START_STICKY
     override fun onBind(intent:Intent?):IBinder?=null
-    override fun onDestroy(){if(scanPermitted())scanner?.stopScan(scanCallback);if(permitted()){gatt?.disconnect();gatt?.close()};gatt=null;tts?.stop();tts?.shutdown();try{tone.release()}catch(_:Exception){};super.onDestroy()}
+    override fun onDestroy(){stopping=true;timeoutThread?.interrupt();if(scanPermitted()){try{scanner?.stopScan(scanCallback)}catch(_:Exception){}};if(permitted()){try{gatt?.disconnect()}catch(_:Exception){};try{gatt?.close()}catch(_:Exception){}};gatt=null;tts?.stop();tts?.shutdown();try{tone.release()}catch(_:Exception){};super.onDestroy()}
     private fun permitted()=Build.VERSION.SDK_INT<31||ActivityCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_CONNECT)==PackageManager.PERMISSION_GRANTED
     private fun scanPermitted()=Build.VERSION.SDK_INT<31||ActivityCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_SCAN)==PackageManager.PERMISSION_GRANTED
 
     private fun startScan(){
+        if(stopping)return
+        reconnectScheduled=false
         if(!scanPermitted()){sendStatus("Bluetooth scan permission missing");stopSelf();return}
-        val adapter=btManager.adapter?:run{sendStatus("Bluetooth unavailable");stopSelf();return}
+        val adapter=btManager.adapter?:run{sendStatus("Bluetooth unavailable - retrying");scheduleReconnect();return}
+        if(!adapter.isEnabled){sendStatus("Bluetooth is OFF - waiting");scheduleReconnect();return}
         scanner=adapter.bluetoothLeScanner;sendStatus("Scanning for vLinker...")
-        scanner?.startScan(null,ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(),scanCallback)
+        try{
+            scanner?.startScan(null,ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(),scanCallback)
+        }catch(_:Exception){
+            sendStatus("BLE scan failed - retrying")
+            scheduleReconnect()
+        }
     }
     private val scanCallback=object:ScanCallback(){
         override fun onScanResult(callbackType:Int,result:ScanResult){
             val d=result.device;val name=try{if(permitted())d.name else null}catch(_:Exception){null}
-            if(d.address.equals(TARGET_MAC,true)||name==TARGET_NAME){if(scanPermitted())scanner?.stopScan(this);connect(d)}
+            if(d.address.equals(TARGET_MAC,true)||name==TARGET_NAME){
+                if(scanPermitted()){try{scanner?.stopScan(this)}catch(_:Exception){}}
+                connect(d)
+            }
+        }
+        override fun onScanFailed(errorCode:Int){
+            sendStatus("BLE scan error "+errorCode+" - retrying")
+            scheduleReconnect()
         }
     }
-    private fun connect(device:BluetoothDevice){if(!permitted())return;sendStatus("Connecting to ${device.address}...");gatt=device.connectGatt(this,false,gattCallback,BluetoothDevice.TRANSPORT_LE)}
+    private fun connect(device:BluetoothDevice){if(!permitted()||stopping)return;sendStatus("Connecting to ${device.address}...");try{gatt=device.connectGatt(this,false,gattCallback,BluetoothDevice.TRANSPORT_LE)}catch(_:Exception){sendStatus("Connect failed - retrying");scheduleReconnect()}}
     private val gattCallback=object:BluetoothGattCallback(){
         override fun onConnectionStateChange(g:BluetoothGatt,status:Int,newState:Int){
-            if(newState==BluetoothProfile.STATE_CONNECTED){sendStatus("Connected, discovering services...");if(permitted())g.discoverServices()}
-            else if(newState==BluetoothProfile.STATE_DISCONNECTED){sendStatus("Disconnected - rescanning");rx=null;tx=null;busy=false;queue.clear();response.clear();if(permitted())g.close();gatt=null;Thread{Thread.sleep(1500);startScan()}.start()}
+            if(newState==BluetoothProfile.STATE_CONNECTED&&status==BluetoothGatt.GATT_SUCCESS){
+                reconnectAttempt=0
+                reconnectScheduled=false
+                sendStatus("Connected, discovering services...")
+                if(permitted()){try{g.discoverServices()}catch(_:Exception){handleDisconnect(g,status)}}
+            } else if(newState==BluetoothProfile.STATE_DISCONNECTED||status!=BluetoothGatt.GATT_SUCCESS){
+                handleDisconnect(g,status)
+            }
         }
         override fun onServicesDiscovered(g:BluetoothGatt,status:Int){
+            if(status!=BluetoothGatt.GATT_SUCCESS){sendStatus("Service discovery failed - reconnecting");handleDisconnect(g,status);return}
             val svc=g.getService(SERVICE_UUID);rx=svc?.getCharacteristic(RX_UUID);tx=svc?.getCharacteristic(TX_UUID)
-            if(rx==null||tx==null){sendStatus("18F0/2AF0/2AF1 not found");if(permitted())g.disconnect();return}
+            if(rx==null||tx==null){sendStatus("18F0/2AF0/2AF1 not found - reconnecting");handleDisconnect(g,-1);return}
             if(!permitted())return;g.setCharacteristicNotification(rx,true)
             val cccd=rx?.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
             if(cccd!=null){if(Build.VERSION.SDK_INT>=33)g.writeDescriptor(cccd,BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) else{@Suppress("DEPRECATION") cccd.value=BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE;@Suppress("DEPRECATION") g.writeDescriptor(cccd)}}
@@ -83,6 +108,26 @@ class ObdService : Service() {
         }
         @Deprecated("Deprecated in API 33") override fun onCharacteristicChanged(gatt:BluetoothGatt,characteristic:BluetoothGattCharacteristic){onRx(characteristic.value?:return)}
         override fun onCharacteristicChanged(gatt:BluetoothGatt,characteristic:BluetoothGattCharacteristic,value:ByteArray){onRx(value)}
+    }
+    @Synchronized private fun handleDisconnect(g:BluetoothGatt?,status:Int){
+        if(stopping)return
+        rx=null;tx=null;busy=false;queue.clear();response.clear();timeoutThread?.interrupt();timeoutThread=null
+        if(permitted()){try{g?.close()}catch(_:Exception){}}
+        if(gatt===g)gatt=null
+        sendStatus(if(status==BluetoothGatt.GATT_SUCCESS||status==0)"Disconnected - reconnecting" else "BLE disconnected ("+status+") - reconnecting")
+        scheduleReconnect()
+    }
+    @Synchronized private fun scheduleReconnect(){
+        if(stopping||reconnectScheduled)return
+        reconnectScheduled=true
+        val delayMs=kotlin.math.min(10000L,1500L*(reconnectAttempt+1))
+        reconnectAttempt++
+        Thread{
+            try{
+                Thread.sleep(delayMs)
+                if(!stopping&&gatt==null)startScan() else reconnectScheduled=false
+            }catch(_:InterruptedException){reconnectScheduled=false}
+        }.start()
     }
     @Synchronized private fun onRx(bytes:ByteArray){response.append(bytes.toString(Charsets.US_ASCII));if(response.toString().trimEnd().endsWith(">"))finishCommand()}
     private fun initializeAdapter(){
