@@ -25,6 +25,8 @@ class ObdService : Service() {
     companion object {
         const val ACTION_STATE="com.hyundaidpf.monitor.STATE"
         const val ACTION_STATUS="com.hyundaidpf.monitor.STATUS"
+        const val ACTION_READ_ECU_INFO="com.hyundaidpf.monitor.READ_ECU_INFO"
+        const val ACTION_ECU_INFO="com.hyundaidpf.monitor.ECU_INFO"
         const val EXTRA_TEXT="text"; const val EXTRA_LOG_PATH="log_path"
         const val EXTRA_REGEN_ACTIVE="regen_active"; const val EXTRA_ENGINE_RUNNING="engine_running"
         private const val CHANNEL="obd_logger"; private const val NOTIFICATION_ID=1001
@@ -48,11 +50,19 @@ class ObdService : Service() {
     private var reconnectAttempt=0
     @Volatile private var reconnectScheduled=false
     @Volatile private var stopping=false
+    @Volatile private var diagnosticRequested=false
+    @Volatile private var diagnosticRunning=false
     private var tts:TextToSpeech?=null; private var ttsReady=false
     private val tone by lazy{ToneGenerator(AudioManager.STREAM_NOTIFICATION,80)}
 
     override fun onCreate(){super.onCreate();btManager=getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager;logger=CsvLogger(this);initTts();createChannel();startForeground(NOTIFICATION_ID,notification("Starting vLinker logger"));sendStatus("Starting");startScan()}
-    override fun onStartCommand(intent:Intent?,flags:Int,startId:Int)=START_STICKY
+    override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int{
+        if(intent?.action==ACTION_READ_ECU_INFO){
+            diagnosticRequested=true
+            sendStatus("ECU info requested")
+        }
+        return START_STICKY
+    }
     override fun onBind(intent:Intent?):IBinder?=null
     override fun onDestroy(){stopping=true;timeoutThread?.interrupt();if(scanPermitted()){try{scanner?.stopScan(scanCallback)}catch(_:Exception){}};if(permitted()){try{gatt?.disconnect()}catch(_:Exception){};try{gatt?.close()}catch(_:Exception){}};gatt=null;tts?.stop();tts?.shutdown();try{tone.release()}catch(_:Exception){};super.onDestroy()}
     private fun permitted()=Build.VERSION.SDK_INT<31||ActivityCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_CONNECT)==PackageManager.PERMISSION_GRANTED
@@ -142,8 +152,72 @@ class ObdService : Service() {
         enqueue("PID_8B","018B",true){ObdDecoder.apply018b(it,state)}
         enqueue("HDR_7E0","ATSH7E0",false){}
         enqueue("ED03","22ED03",true){ObdDecoder.applyEd03(it,state)}
-        enqueue("ED1D","22ED1D",true){ObdDecoder.applyEd1d(it,state);state.engineRunning=(state.rpm?:0.0)>300.0;state.timestamp=System.currentTimeMillis();processEvents();logger.logLive(state);broadcastState();Thread{Thread.sleep(1000);pollCycle()}.start()}
+        enqueue("ED1D","22ED1D",true){
+            ObdDecoder.applyEd1d(it,state)
+            state.engineRunning=(state.rpm?:0.0)>300.0
+            state.timestamp=System.currentTimeMillis()
+            processEvents()
+            logger.logLive(state)
+            broadcastState()
+            if(diagnosticRequested&&!diagnosticRunning){
+                diagnosticRequested=false
+                readEcuInfo()
+            } else {
+                Thread{Thread.sleep(1000);pollCycle()}.start()
+            }
+        }
     }
+    private fun readEcuInfo(){
+        if(diagnosticRunning)return
+        diagnosticRunning=true
+        sendStatus("Reading ECU information...")
+
+        val results=linkedMapOf<String,String>()
+
+        enqueue("ECU_HDR_7DF","ATSH7DF",false){}
+        enqueue("ECU_VIN_OBD","0902",true){r->
+            results["VIN (0902)"]=ObdDecoder.decodeObdVin(r)?:shortRaw(r)
+        }
+
+        enqueue("ECU_HDR_7E0","ATSH7E0",false){}
+        val dids=listOf(
+            "F187" to "Part / spare number",
+            "F189" to "Software version",
+            "F18A" to "Supplier info",
+            "F190" to "VIN (UDS)"
+        )
+
+        dids.forEachIndexed{index,pair->
+            val cmd="22"+pair.first
+            val did=pair.first.toInt(16)
+            enqueue("ECU_"+pair.first,cmd,true){r->
+                results[pair.second]=ObdDecoder.decodeUdsAscii(r,did)?:shortRaw(r)
+                if(index==dids.lastIndex){
+                    diagnosticRunning=false
+                    broadcastEcuInfo(results)
+                    Thread{Thread.sleep(500);pollCycle()}.start()
+                }
+            }
+        }
+    }
+
+    private fun shortRaw(r:String):String{
+        val clean=r.replace("\r"," ").replace("\n"," ").replace(Regex("\\s+")," ").trim()
+        return if(clean.length>120)clean.take(120)+"..." else clean.ifBlank{"No response"}
+    }
+
+    private fun broadcastEcuInfo(values:Map<String,String>){
+        val text=buildString{
+            appendLine("ECU INFORMATION")
+            appendLine("------------------------------")
+            values.forEach{(k,v)->appendLine(k.padEnd(20,' ') + ": " + v)}
+            appendLine()
+            appendLine("Read-only identifiers. Raw responses are saved in the log.")
+        }
+        sendBroadcast(Intent(ACTION_ECU_INFO).setPackage(packageName).putExtra(EXTRA_TEXT,text).putExtra(EXTRA_LOG_PATH,logger.folderPath()))
+        sendStatus("ECU information read complete")
+    }
+
     private fun processEvents(){
         val current04=state.status04==true&&state.engineRunning
         if(current04&&status04StartedAt==null){status04StartedAt=System.currentTimeMillis();logger.event("STATUS_04_START",state)}
