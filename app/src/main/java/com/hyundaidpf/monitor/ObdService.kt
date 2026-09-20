@@ -40,7 +40,11 @@ class ObdService : Service() {
     private data class Pending(val label:String,val command:String,val logRaw:Boolean,val onDone:(String)->Unit)
     private val queue=ConcurrentLinkedQueue<Pending>(); @Volatile private var busy=false
     private val response=StringBuilder(); private var timeoutThread:Thread?=null
-    private var status04StartedAt:Long?=null; private var previousRegen:Boolean?=null
+    private var status04StartedAt:Long?=null
+    private var confirmedRegen:Boolean?=null
+    private var regenCandidate:Boolean?=null
+    private var regenCandidateCount=0
+    private val regenConfirmSamples=3
     private var tts:TextToSpeech?=null; private var ttsReady=false
     private val tone by lazy{ToneGenerator(AudioManager.STREAM_NOTIFICATION,80)}
 
@@ -82,14 +86,16 @@ class ObdService : Service() {
     }
     @Synchronized private fun onRx(bytes:ByteArray){response.append(bytes.toString(Charsets.US_ASCII));if(response.toString().trimEnd().endsWith(">"))finishCommand()}
     private fun initializeAdapter(){
-        listOf("ATZ","ATE0","ATH1","ATS0","ATM0","ATAT1","ATAL","ATSP6","ATSH7E0").forEach{enqueue("INIT",it,false){}}
+        listOf("ATZ","ATE0","ATH1","ATS0","ATM0","ATAT1","ATAL","ATSP6").forEach{enqueue("INIT",it,false){}}
         enqueue("READY","ATI",false){sendStatus("Logging active");pollCycle()}
     }
     private fun pollCycle(){
         if(gatt==null||tx==null)return
+        enqueue("HDR_7DF","ATSH7DF",false){}
         enqueue("RPM","010C",false){ObdDecoder.decodeRpm(it)?.let{v->state.rpm=v}}
         enqueue("SPEED","010D",false){ObdDecoder.decodeSpeed(it)?.let{v->state.speedKmh=v}}
         enqueue("PID_8B","018B",true){ObdDecoder.apply018b(it,state)}
+        enqueue("HDR_7E0","ATSH7E0",false){}
         enqueue("ED03","22ED03",true){ObdDecoder.applyEd03(it,state)}
         enqueue("ED1D","22ED1D",true){ObdDecoder.applyEd1d(it,state);state.engineRunning=(state.rpm?:0.0)>300.0;state.timestamp=System.currentTimeMillis();processEvents();logger.logLive(state);broadcastState();Thread{Thread.sleep(1000);pollCycle()}.start()}
     }
@@ -98,8 +104,27 @@ class ObdService : Service() {
         if(current04&&status04StartedAt==null){status04StartedAt=System.currentTimeMillis();logger.event("STATUS_04_START",state)}
         else if(!current04&&status04StartedAt!=null){val d=(System.currentTimeMillis()-status04StartedAt!!)/1000.0;logger.event("STATUS_04_END",state,d);status04StartedAt=null}
         val r=state.regenActive
-        if(state.engineRunning&&r!=null&&previousRegen!=null&&r!=previousRegen){logger.event(if(r)"REGEN_START" else "REGEN_END",state);if(r)announceRegenStart() else announceRegenEnd()}
-        if(state.engineRunning&&r!=null)previousRegen=r
+        if(!state.engineRunning||r==null){
+            regenCandidate=null
+            regenCandidateCount=0
+            return
+        }
+        if(r==regenCandidate){
+            regenCandidateCount++
+        } else {
+            regenCandidate=r
+            regenCandidateCount=1
+        }
+        if(regenCandidateCount<regenConfirmSamples)return
+        if(confirmedRegen==null){
+            confirmedRegen=r
+            return
+        }
+        if(confirmedRegen!=r){
+            confirmedRegen=r
+            logger.event(if(r)"REGEN_START" else "REGEN_END",state)
+            if(r)announceRegenStart() else announceRegenEnd()
+        }
     }
     private fun initTts(){tts=TextToSpeech(this){status->if(status==TextToSpeech.SUCCESS){val e=tts?:return@TextToSpeech;val sr=Locale("sr","RS");val lr=e.setLanguage(sr);if(lr==TextToSpeech.LANG_MISSING_DATA||lr==TextToSpeech.LANG_NOT_SUPPORTED)e.setLanguage(Locale("sr"));e.setSpeechRate(.95f);e.setPitch(1.08f);e.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build());selectPreferredFemaleVoice(e);ttsReady=true}}}
     private fun selectPreferredFemaleVoice(e:TextToSpeech){try{val vs=e.voices?.filter{it.locale.language.equals("sr",true)}?:return;if(vs.isNotEmpty())e.voice=vs.firstOrNull{val n=it.name.lowercase(Locale.ROOT);n.contains("female")||n.contains("woman")||n.contains("fem")||n.contains("sr-rs-x-sre")||n.contains("sr-rs-x-srf")}?:vs.first()}catch(_:Exception){}}
@@ -114,13 +139,14 @@ class ObdService : Service() {
     }
     @Synchronized private fun finishCommand(){if(!busy)return;timeoutThread?.interrupt();timeoutThread=null;val p=queue.poll()?:run{busy=false;return};val text=response.toString().trim();if(p.logRaw)logger.raw(p.label,p.command,text);try{p.onDone(text)}catch(_:Exception){};busy=false;pump()}
     private fun broadcastState(){
+        val shownRegen=confirmedRegen?:state.regenActive
         val text=buildString{
             appendLine("RPM              : ${state.rpm?.let{"%.0f".format(it)}?:"?"}");appendLine("SPEED            : ${state.speedKmh?:"?"} km/h");appendLine("ENGINE           : ${if(state.engineRunning)"RUNNING" else "OFF"}");appendLine()
-            appendLine("REGEN            : ${if(state.regenActive==true)"ON" else "OFF"}");appendLine("STATUS 0x04      : ${if(state.status04==true)"ON" else "OFF"}");appendLine("DPF LOAD         : ${state.regenTriggerPct?.let{"%.2f %%".format(it)}?:"?"}");appendLine("SOOT             : ${state.sootG?.let{"%.3f g".format(it)}?:"?"}");appendLine("DPF DELTA-P      : ${state.dpfPressureHpa?.let{"%.2f hPa".format(it)}?:"?"}");appendLine()
+            appendLine("REGEN            : ${if(shownRegen==true)"ON" else "OFF"}");appendLine("STATUS 0x04      : ${if(state.status04==true)"ON" else "OFF"}");appendLine("DPF LOAD         : ${state.regenTriggerPct?.let{"%.2f %%".format(it)}?:"?"}");appendLine("SOOT             : ${state.sootG?.let{"%.3f g".format(it)}?:"?"}");appendLine("DPF DELTA-P      : ${state.dpfPressureHpa?.let{"%.2f hPa".format(it)}?:"?"}");appendLine()
             appendLine("TURBO UPSTREAM   : ${state.turboTempC?.let{"%.1f C".format(it)}?:"?"}");appendLine("CAT UPSTREAM     : ${state.catalystTempC?.let{"%.1f C".format(it)}?:"?"}");appendLine("DPF UPSTREAM     : ${state.dpfTempC?.let{"%.1f C".format(it)}?:"?"}");appendLine("SCR UPSTREAM     : ${state.scrTempC?.let{"%.1f C".format(it)}?:"?"}");appendLine();appendLine("AVG REGEN DIST   : ${state.avgRegenDistanceKm?:"?"} km");appendLine("AVG REGEN TIME   : ${state.avgRegenTimeMin?:"?"} min")
         }
-        sendBroadcast(Intent(ACTION_STATE).setPackage(packageName).putExtra(EXTRA_TEXT,text).putExtra(EXTRA_LOG_PATH,logger.folderPath()).putExtra(EXTRA_REGEN_ACTIVE,state.regenActive==true).putExtra(EXTRA_ENGINE_RUNNING,state.engineRunning))
-        val nt=if(state.regenActive==true&&state.engineRunning)"DPF REGEN ACTIVE | ${state.rpm?.toInt()?:0} rpm" else "${state.rpm?.toInt()?:0} rpm | Soot ${state.sootG?.let{"%.2f".format(it)}?:"?"} g"
+        sendBroadcast(Intent(ACTION_STATE).setPackage(packageName).putExtra(EXTRA_TEXT,text).putExtra(EXTRA_LOG_PATH,logger.folderPath()).putExtra(EXTRA_REGEN_ACTIVE,shownRegen==true).putExtra(EXTRA_ENGINE_RUNNING,state.engineRunning))
+        val nt=if(shownRegen==true&&state.engineRunning)"DPF REGEN ACTIVE | ${state.rpm?.toInt()?:0} rpm" else "${state.rpm?.toInt()?:0} rpm | Soot ${state.sootG?.let{"%.2f".format(it)}?:"?"} g"
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID,notification(nt))
     }
     private fun sendStatus(text:String){sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).putExtra(EXTRA_TEXT,text).putExtra(EXTRA_LOG_PATH,logger.folderPath()))}
