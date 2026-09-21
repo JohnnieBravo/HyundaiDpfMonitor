@@ -27,6 +27,7 @@ class ObdService : Service() {
         const val ACTION_STATUS="com.hyundaidpf.monitor.STATUS"
         const val ACTION_READ_ECU_INFO="com.hyundaidpf.monitor.READ_ECU_INFO"
         const val ACTION_ECU_INFO="com.hyundaidpf.monitor.ECU_INFO"
+        const val ACTION_REQUEST_SNAPSHOT="com.hyundaidpf.monitor.REQUEST_SNAPSHOT"
         const val EXTRA_TEXT="text"; const val EXTRA_LOG_PATH="log_path"
         const val EXTRA_REGEN_ACTIVE="regen_active"; const val EXTRA_ENGINE_RUNNING="engine_running"
         private const val CHANNEL="obd_logger"; private const val NOTIFICATION_ID=1001
@@ -56,10 +57,19 @@ class ObdService : Service() {
     @Volatile private var diagnosticRequested=false
     @Volatile private var diagnosticRunning=false
     private var tts:TextToSpeech?=null; private var ttsReady=false
+    @Volatile private var loggerReady=false
+    @Volatile private var lastStatus="Starting"
+    @Volatile private var lastEcuInfo:String?=null
     private val tone by lazy{ToneGenerator(AudioManager.STREAM_NOTIFICATION,80)}
 
     override fun onCreate(){super.onCreate();btManager=getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager;logger=CsvLogger(this);initTts();createChannel();startForeground(NOTIFICATION_ID,notification("Starting vLinker logger"));sendStatus("Starting");startScan()}
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int{
+        if(intent?.action==ACTION_REQUEST_SNAPSHOT){
+            sendStatus(lastStatus)
+            if(loggerReady) broadcastState()
+            lastEcuInfo?.let { sendBroadcast(Intent(ACTION_ECU_INFO).setPackage(packageName).putExtra(EXTRA_TEXT,it).putExtra(EXTRA_LOG_PATH,logger.folderPath())) }
+            return START_STICKY
+        }
         if(intent?.action==ACTION_READ_ECU_INFO){
             diagnosticRequested=true
             sendStatus("ECU info requested")
@@ -145,7 +155,7 @@ class ObdService : Service() {
     @Synchronized private fun onRx(bytes:ByteArray){response.append(bytes.toString(Charsets.US_ASCII));if(response.toString().trimEnd().endsWith(">"))finishCommand()}
     private fun initializeAdapter(){
         listOf("ATZ","ATE0","ATH1","ATS0","ATM0","ATAT1","ATAL","ATSP6").forEach{enqueue("INIT",it,false){}}
-        enqueue("READY","ATI",false){sendStatus("Logging active");pollCycle()}
+        enqueue("READY","ATI",false){loggerReady=true;sendStatus("Logging active");pollCycle()}
     }
     private fun pollCycle(){
         if(gatt==null||tx==null)return
@@ -157,7 +167,7 @@ class ObdService : Service() {
         enqueue("ED03","22ED03",true){ObdDecoder.applyEd03(it,state)}
         enqueue("ED1D","22ED1D",true){
             ObdDecoder.applyEd1d(it,state)
-            state.engineRunning=(state.rpm?:0.0)>300.0
+            updateEngineState()
             state.timestamp=System.currentTimeMillis()
             processEvents()
             logger.logLive(state)
@@ -217,6 +227,7 @@ class ObdService : Service() {
             appendLine()
             appendLine("Read-only identifiers. Raw responses are saved in the log.")
         }
+        lastEcuInfo=text
         sendBroadcast(Intent(ACTION_ECU_INFO).setPackage(packageName).putExtra(EXTRA_TEXT,text).putExtra(EXTRA_LOG_PATH,logger.folderPath()))
         sendStatus("ECU information read complete")
     }
@@ -305,7 +316,7 @@ class ObdService : Service() {
         val nt=if(shownRegen==true&&state.engineRunning)"DPF REGEN ACTIVE | ${state.rpm?.toInt()?:0} rpm" else "${state.rpm?.toInt()?:0} rpm | Soot ${state.sootG?.let{"%.2f".format(it)}?:"?"} g"
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID,notification(nt))
     }
-    private fun sendStatus(text:String){sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).putExtra(EXTRA_TEXT,text).putExtra(EXTRA_LOG_PATH,logger.folderPath()))}
+    private fun sendStatus(text:String){lastStatus=text;sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).putExtra(EXTRA_TEXT,text).putExtra(EXTRA_LOG_PATH,logger.folderPath()))}
     private fun createChannel(){getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL,"OBD logging",NotificationManager.IMPORTANCE_LOW))}
     private fun notification(text:String)=NotificationCompat.Builder(this,CHANNEL).setContentTitle("Hyundai DPF Monitor").setContentText(text).setSmallIcon(android.R.drawable.stat_sys_data_bluetooth).setOngoing(true).build()
 }
