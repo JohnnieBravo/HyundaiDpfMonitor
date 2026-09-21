@@ -4,7 +4,7 @@ data class DpfState(
     var timestamp: Long = System.currentTimeMillis(),
     var rpm: Double? = null,
     var speedKmh: Int? = null,
-    var engineRunning: Boolean = false,
+    var engineRunning: Boolean = false,\n    var engineState: String = "UNKNOWN",
     var regenActive: Boolean? = null,
     var regenActiveType: Boolean? = null,
     var status04: Boolean? = null,
