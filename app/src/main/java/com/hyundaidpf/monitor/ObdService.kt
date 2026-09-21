@@ -205,9 +205,8 @@ class ObdService : Service() {
     }
 
     private fun shortRaw(r:String):String{
-        val clean=r.replace("\r"," ").replace("
-"," ").replace(Regex("\\s+")," ").trim()
-        return if(clean.length>120)clean.take(120)+"..." else clean.ifBlank{"No response"}
+        val clean = r.replace("\\r", " ").replace("\\n", " ").replace(Regex("\\\\s+"), " ").trim()
+        return if(clean.length>120) clean.take(120)+"..." else clean.ifBlank{"No response"}
     }
 
     private fun broadcastEcuInfo(values:Map<String,String>){
