@@ -1,6 +1,6 @@
 # Hyundai DPF Monitor
 
-**Current version: 0.3.0**
+**Current version: 0.3.1**
 
 Direct Android BLE logger for vLinker MC+ / Hyundai Tucson.
 
