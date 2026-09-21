@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.1 - 2026-09-21
+
+Bug-fix release based on the latest tested Android build.
+
+### Fixed
+- Preserves the actual BLE/logging connection state across screen rotation and app resume.
+- Keeps START / STOP / READ ECU INFO controls synchronized with the foreground service.
+- Preserves previously read ECU information across Activity recreation.
+- Prevents the app from showing Disconnected while live ECU data is still arriving.
+- Avoids recreating the connected-device foreground service just to restore UI state.
+- Keeps Start/Stop-aware engine state tracking active in the polling loop.
+- Fixes Android foreground-service startup crash caused by the UI snapshot path.
+- Includes the current responsive portrait / landscape UI fixes.
+
+### Notes
+- Monitoring remains intended to be read-only.
+- Hyundai-specific PID / DID mappings are still being reverse-engineered.
+- Status bit 0x04 remains intentionally unlabeled until its exact function is confirmed.
+
 ## 0.3.0 - 2026-09-21
 
 First public test release.
