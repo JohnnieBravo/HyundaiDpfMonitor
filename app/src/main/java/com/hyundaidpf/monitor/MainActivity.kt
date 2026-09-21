@@ -118,7 +118,15 @@ class MainActivity : AppCompatActivity() {
         }
         // Activity may have been recreated by rotation while the foreground service
         // kept logging. Ask it to replay its current status/data/ECU snapshot.
-        startService(Intent(this, ObdService::class.java).setAction(ObdService.ACTION_REQUEST_SNAPSHOT))
+        // Do not create ObdService just to restore UI. On Android 14/15 a
+        // connectedDevice foreground service may only be created after the
+        // runtime Bluetooth permission path has been satisfied. If the logger
+        // is already alive, a broadcast request lets it replay its snapshot;
+        // if it is not alive, nothing is started.
+        sendBroadcast(
+            Intent(ObdService.ACTION_REQUEST_SNAPSHOT)
+                .setPackage(packageName)
+        )
     }
 
     override fun onStop() {
