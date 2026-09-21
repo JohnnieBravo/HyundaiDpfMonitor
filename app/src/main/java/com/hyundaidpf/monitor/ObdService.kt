@@ -30,6 +30,15 @@ class ObdService : Service() {
         const val ACTION_REQUEST_SNAPSHOT="com.hyundaidpf.monitor.REQUEST_SNAPSHOT"
         const val EXTRA_TEXT="text"; const val EXTRA_LOG_PATH="log_path"
         const val EXTRA_REGEN_ACTIVE="regen_active"; const val EXTRA_ENGINE_RUNNING="engine_running"
+        const val EXTRA_CONNECTED="connected"
+        const val UI_PREFS="ui_state"
+        const val PREF_STATUS="status"
+        const val PREF_LIVE="live"
+        const val PREF_ECU_INFO="ecu_info"
+        const val PREF_LOG_PATH="log_path"
+        const val PREF_CONNECTED="connected"
+        const val PREF_REGEN_ACTIVE="regen_active"
+        const val PREF_ENGINE_RUNNING="engine_running"
         private const val CHANNEL="obd_logger"; private const val NOTIFICATION_ID=1001
         private const val TARGET_MAC="c5:57:46:dc:6c:e9"; private const val TARGET_NAME="vLinker MC-IOS"
         private val SERVICE_UUID=UUID.fromString("000018f0-0000-1000-8000-00805f9b34fb")
@@ -58,6 +67,7 @@ class ObdService : Service() {
     @Volatile private var diagnosticRunning=false
     private var tts:TextToSpeech?=null; private var ttsReady=false
     @Volatile private var loggerReady=false
+    @Volatile private var connected=false
     @Volatile private var lastStatus="Starting"
     @Volatile private var lastEcuInfo:String?=null
     private val tone by lazy{ToneGenerator(AudioManager.STREAM_NOTIFICATION,80)}
@@ -77,7 +87,7 @@ class ObdService : Service() {
         return START_STICKY
     }
     override fun onBind(intent:Intent?):IBinder?=null
-    override fun onDestroy(){stopping=true;timeoutThread?.interrupt();if(scanPermitted()){try{scanner?.stopScan(scanCallback)}catch(_:Exception){}};if(permitted()){try{gatt?.disconnect()}catch(_:Exception){};try{gatt?.close()}catch(_:Exception){}};gatt=null;tts?.stop();tts?.shutdown();try{tone.release()}catch(_:Exception){};super.onDestroy()}
+    override fun onDestroy(){stopping=true;connected=false;persistUi(statusText="Stopped", liveText=null, ecuText=null, regenActive=null, engineRunning=null);timeoutThread?.interrupt();if(scanPermitted()){try{scanner?.stopScan(scanCallback)}catch(_:Exception){}};if(permitted()){try{gatt?.disconnect()}catch(_:Exception){};try{gatt?.close()}catch(_:Exception){}};gatt=null;tts?.stop();tts?.shutdown();try{tone.release()}catch(_:Exception){};super.onDestroy()}
     private fun permitted()=Build.VERSION.SDK_INT<31||ActivityCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_CONNECT)==PackageManager.PERMISSION_GRANTED
     private fun scanPermitted()=Build.VERSION.SDK_INT<31||ActivityCompat.checkSelfPermission(this,Manifest.permission.BLUETOOTH_SCAN)==PackageManager.PERMISSION_GRANTED
 
@@ -134,7 +144,7 @@ class ObdService : Service() {
     }
     @Synchronized private fun handleDisconnect(g:BluetoothGatt?,status:Int){
         if(stopping)return
-        rx=null;tx=null;busy=false;queue.clear();response.clear();timeoutThread?.interrupt();timeoutThread=null
+        connected=false;rx=null;tx=null;busy=false;queue.clear();response.clear();timeoutThread?.interrupt();timeoutThread=null
         if(permitted()){try{g?.close()}catch(_:Exception){}}
         if(gatt===g)gatt=null
         sendStatus(if(status==BluetoothGatt.GATT_SUCCESS||status==0)"Disconnected - reconnecting" else "BLE disconnected ("+status+") - reconnecting")
@@ -155,7 +165,7 @@ class ObdService : Service() {
     @Synchronized private fun onRx(bytes:ByteArray){response.append(bytes.toString(Charsets.US_ASCII));if(response.toString().trimEnd().endsWith(">"))finishCommand()}
     private fun initializeAdapter(){
         listOf("ATZ","ATE0","ATH1","ATS0","ATM0","ATAT1","ATAL","ATSP6").forEach{enqueue("INIT",it,false){}}
-        enqueue("READY","ATI",false){loggerReady=true;sendStatus("Logging active");pollCycle()}
+        enqueue("READY","ATI",false){loggerReady=true;connected=true;sendStatus("Logging active");pollCycle()}
     }
     private fun pollCycle(){
         if(gatt==null||tx==null)return
@@ -228,6 +238,7 @@ class ObdService : Service() {
             appendLine("Read-only identifiers. Raw responses are saved in the log.")
         }
         lastEcuInfo=text
+        persistUi(ecuText=text)
         sendBroadcast(Intent(ACTION_ECU_INFO).setPackage(packageName).putExtra(EXTRA_TEXT,text).putExtra(EXTRA_LOG_PATH,logger.folderPath()))
         sendStatus("ECU information read complete")
     }
@@ -312,11 +323,52 @@ class ObdService : Service() {
             appendLine("REGEN            : ${if(shownRegen==true)"ON" else "OFF"}");appendLine("STATUS 0x04      : ${if(state.status04==true)"ON" else "OFF"}");appendLine("DPF LOAD         : ${state.regenTriggerPct?.let{"%.2f %%".format(it)}?:"?"}");appendLine("SOOT             : ${state.sootG?.let{"%.3f g".format(it)}?:"?"}");appendLine("DPF DELTA-P      : ${state.dpfPressureHpa?.let{"%.2f hPa".format(it)}?:"?"}");appendLine()
             appendLine("TURBO UPSTREAM   : ${state.turboTempC?.let{"%.1f C".format(it)}?:"?"}");appendLine("CAT UPSTREAM     : ${state.catalystTempC?.let{"%.1f C".format(it)}?:"?"}");appendLine("DPF UPSTREAM     : ${state.dpfTempC?.let{"%.1f C".format(it)}?:"?"}");appendLine("SCR UPSTREAM     : ${state.scrTempC?.let{"%.1f C".format(it)}?:"?"}");appendLine();appendLine("AVG REGEN DIST   : ${state.avgRegenDistanceKm?:"?"} km");appendLine("AVG REGEN TIME   : ${state.avgRegenTimeMin?:"?"} min")
         }
-        sendBroadcast(Intent(ACTION_STATE).setPackage(packageName).putExtra(EXTRA_TEXT,text).putExtra(EXTRA_LOG_PATH,logger.folderPath()).putExtra(EXTRA_REGEN_ACTIVE,shownRegen==true).putExtra(EXTRA_ENGINE_RUNNING,state.engineRunning))
+        persistUi(
+            liveText=text,
+            regenActive=shownRegen==true,
+            engineRunning=state.engineRunning
+        )
+        sendBroadcast(
+            Intent(ACTION_STATE)
+                .setPackage(packageName)
+                .putExtra(EXTRA_TEXT,text)
+                .putExtra(EXTRA_LOG_PATH,logger.folderPath())
+                .putExtra(EXTRA_REGEN_ACTIVE,shownRegen==true)
+                .putExtra(EXTRA_ENGINE_RUNNING,state.engineRunning)
+                .putExtra(EXTRA_CONNECTED,connected)
+        )
         val nt=if(shownRegen==true&&state.engineRunning)"DPF REGEN ACTIVE | ${state.rpm?.toInt()?:0} rpm" else "${state.rpm?.toInt()?:0} rpm | Soot ${state.sootG?.let{"%.2f".format(it)}?:"?"} g"
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID,notification(nt))
     }
-    private fun sendStatus(text:String){lastStatus=text;sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).putExtra(EXTRA_TEXT,text).putExtra(EXTRA_LOG_PATH,logger.folderPath()))}
+    private fun sendStatus(text:String){
+        lastStatus=text
+        persistUi(statusText=text)
+        sendBroadcast(
+            Intent(ACTION_STATUS)
+                .setPackage(packageName)
+                .putExtra(EXTRA_TEXT,text)
+                .putExtra(EXTRA_LOG_PATH,logger.folderPath())
+                .putExtra(EXTRA_CONNECTED,connected)
+        )
+    }
+
+    private fun persistUi(
+        statusText:String?=null,
+        liveText:String?=null,
+        ecuText:String?=null,
+        regenActive:Boolean?=null,
+        engineRunning:Boolean?=null
+    ){
+        val e=getSharedPreferences(UI_PREFS,Context.MODE_PRIVATE).edit()
+        statusText?.let{e.putString(PREF_STATUS,it)}
+        liveText?.let{e.putString(PREF_LIVE,it)}
+        ecuText?.let{e.putString(PREF_ECU_INFO,it)}
+        e.putString(PREF_LOG_PATH,logger.folderPath())
+        e.putBoolean(PREF_CONNECTED,connected)
+        regenActive?.let{e.putBoolean(PREF_REGEN_ACTIVE,it)}
+        engineRunning?.let{e.putBoolean(PREF_ENGINE_RUNNING,it)}
+        e.apply()
+    }
     private fun createChannel(){getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL,"OBD logging",NotificationManager.IMPORTANCE_LOW))}
     private fun notification(text:String)=NotificationCompat.Builder(this,CHANNEL).setContentTitle("Hyundai DPF Monitor").setContentText(text).setSmallIcon(android.R.drawable.stat_sys_data_bluetooth).setOngoing(true).build()
 }
