@@ -42,7 +42,7 @@ class ObdService : Service() {
     private data class Pending(val label:String,val command:String,val logRaw:Boolean,val onDone:(String)->Unit)
     private val queue=ConcurrentLinkedQueue<Pending>(); @Volatile private var busy=false
     private val response=StringBuilder(); private var timeoutThread:Thread?=null
-    private var status04StartedAt:Long?=null
+    private var status04StartedAt:Long?=null\n    private var lastRunningAt:Long?=null\n    private var startStopEnteredAt:Long?=null\n    private var restartSamples=0
     private var confirmedRegen:Boolean?=null
     private var regenCandidate:Boolean?=null
     private var regenCandidateCount=0
@@ -218,7 +218,7 @@ class ObdService : Service() {
         sendStatus("ECU information read complete")
     }
 
-    private fun processEvents(){
+    private fun updateEngineState(){\n        val now=System.currentTimeMillis()\n        val rpm=state.rpm?:0.0\n        val speed=state.speedKmh?:0\n        when {\n            rpm > 700.0 -> {\n                restartSamples++\n                state.engineRunning=true\n                state.engineState=if(restartSamples>=2) "RUNNING" else "RESTARTING"\n                lastRunningAt=now\n                if(restartSamples>=2) startStopEnteredAt=null\n            }\n            rpm < 100.0 && speed==0 && lastRunningAt!=null && now-lastRunningAt!! <= 120000L -> {\n                restartSamples=0\n                state.engineRunning=false\n                state.engineState="START_STOP_OFF"\n                if(startStopEnteredAt==null) startStopEnteredAt=now\n            }\n            rpm in 100.0..700.0 -> {\n                restartSamples=0\n                state.engineRunning=false\n                state.engineState="RESTARTING"\n            }\n            else -> {\n                restartSamples=0\n                state.engineRunning=false\n                state.engineState="VEHICLE_OFF"\n            }\n        }\n        if(state.engineState=="START_STOP_OFF" && startStopEnteredAt!=null && now-startStopEnteredAt!! > 120000L){\n            state.engineState="VEHICLE_OFF"\n        }\n    }\n\n    private fun processEvents(){
         val current04=state.status04==true&&state.engineRunning
         if(current04&&status04StartedAt==null){status04StartedAt=System.currentTimeMillis();logger.event("STATUS_04_START",state)}
         else if(!current04&&status04StartedAt!=null){val d=(System.currentTimeMillis()-status04StartedAt!!)/1000.0;logger.event("STATUS_04_END",state,d);status04StartedAt=null}
@@ -260,7 +260,7 @@ class ObdService : Service() {
     private fun broadcastState(){
         val shownRegen=confirmedRegen?:state.regenActive
         val text=buildString{
-            appendLine("RPM              : ${state.rpm?.let{"%.0f".format(it)}?:"?"}");appendLine("SPEED            : ${state.speedKmh?:"?"} km/h");appendLine("ENGINE           : ${if(state.engineRunning)"RUNNING" else "OFF"}");appendLine()
+            appendLine("RPM              : ${state.rpm?.let{"%.0f".format(it)}?:"?"}");appendLine("SPEED            : ${state.speedKmh?:"?"} km/h");appendLine("ENGINE           : ${state.engineState}");appendLine()
             appendLine("REGEN            : ${if(shownRegen==true)"ON" else "OFF"}");appendLine("STATUS 0x04      : ${if(state.status04==true)"ON" else "OFF"}");appendLine("DPF LOAD         : ${state.regenTriggerPct?.let{"%.2f %%".format(it)}?:"?"}");appendLine("SOOT             : ${state.sootG?.let{"%.3f g".format(it)}?:"?"}");appendLine("DPF DELTA-P      : ${state.dpfPressureHpa?.let{"%.2f hPa".format(it)}?:"?"}");appendLine()
             appendLine("TURBO UPSTREAM   : ${state.turboTempC?.let{"%.1f C".format(it)}?:"?"}");appendLine("CAT UPSTREAM     : ${state.catalystTempC?.let{"%.1f C".format(it)}?:"?"}");appendLine("DPF UPSTREAM     : ${state.dpfTempC?.let{"%.1f C".format(it)}?:"?"}");appendLine("SCR UPSTREAM     : ${state.scrTempC?.let{"%.1f C".format(it)}?:"?"}");appendLine();appendLine("AVG REGEN DIST   : ${state.avgRegenDistanceKm?:"?"} km");appendLine("AVG REGEN TIME   : ${state.avgRegenTimeMin?:"?"} min")
         }
