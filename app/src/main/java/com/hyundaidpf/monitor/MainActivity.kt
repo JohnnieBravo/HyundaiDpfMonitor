@@ -109,12 +109,16 @@ class MainActivity : AppCompatActivity() {
             addAction(ObdService.ACTION_ECU_INFO)
         }
 
+
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(receiver, filter, RECEIVER_NOT_EXPORTED)
         } else {
             @Suppress("DEPRECATION")
             registerReceiver(receiver, filter)
         }
+        // Activity may have been recreated by rotation while the foreground service
+        // kept logging. Ask it to replay its current status/data/ECU snapshot.
+        startService(Intent(this, ObdService::class.java).setAction(ObdService.ACTION_REQUEST_SNAPSHOT))
     }
 
     override fun onStop() {
