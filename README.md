@@ -1,8 +1,16 @@
 # Hyundai DPF Monitor
 
+**Current version: 0.3.0**
+
 Direct Android BLE logger for vLinker MC+ / Hyundai Tucson.
 
 ## What it does
+- Direct BLE connection to vLinker MC+
+- Foreground logging that continues with the screen off
+- Responsive portrait / landscape UI
+- Preserves live connection state and ECU information across rotation and app resume
+- Handles Hyundai Start/Stop engine transitions in the logger
+- Reads basic ECU identifiers (VIN, part/spare number, software/supplier info)
 - Scans for `vLinker MC-IOS` or MAC `c5:57:46:dc:6c:e9`
 - BLE service `18F0`, RX notify `2AF0`, TX write `2AF1`
 - Polls `010C`, `010D`, `018B`, `22ED03`, `22ED1D`
