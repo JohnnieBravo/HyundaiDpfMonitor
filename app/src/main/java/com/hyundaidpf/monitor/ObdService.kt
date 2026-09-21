@@ -42,7 +42,10 @@ class ObdService : Service() {
     private data class Pending(val label:String,val command:String,val logRaw:Boolean,val onDone:(String)->Unit)
     private val queue=ConcurrentLinkedQueue<Pending>(); @Volatile private var busy=false
     private val response=StringBuilder(); private var timeoutThread:Thread?=null
-    private var status04StartedAt:Long?=null\n    private var lastRunningAt:Long?=null\n    private var startStopEnteredAt:Long?=null\n    private var restartSamples=0
+    private var status04StartedAt:Long?=null
+    private var lastRunningAt:Long?=null
+    private var startStopEnteredAt:Long?=null
+    private var restartSamples=0
     private var confirmedRegen:Boolean?=null
     private var regenCandidate:Boolean?=null
     private var regenCandidateCount=0
@@ -202,7 +205,8 @@ class ObdService : Service() {
     }
 
     private fun shortRaw(r:String):String{
-        val clean=r.replace("\r"," ").replace("\n"," ").replace(Regex("\\s+")," ").trim()
+        val clean=r.replace("\r"," ").replace("
+"," ").replace(Regex("\\s+")," ").trim()
         return if(clean.length>120)clean.take(120)+"..." else clean.ifBlank{"No response"}
     }
 
@@ -218,7 +222,41 @@ class ObdService : Service() {
         sendStatus("ECU information read complete")
     }
 
-    private fun updateEngineState(){\n        val now=System.currentTimeMillis()\n        val rpm=state.rpm?:0.0\n        val speed=state.speedKmh?:0\n        when {\n            rpm > 700.0 -> {\n                restartSamples++\n                state.engineRunning=true\n                state.engineState=if(restartSamples>=2) "RUNNING" else "RESTARTING"\n                lastRunningAt=now\n                if(restartSamples>=2) startStopEnteredAt=null\n            }\n            rpm < 100.0 && speed==0 && lastRunningAt!=null && now-lastRunningAt!! <= 120000L -> {\n                restartSamples=0\n                state.engineRunning=false\n                state.engineState="START_STOP_OFF"\n                if(startStopEnteredAt==null) startStopEnteredAt=now\n            }\n            rpm in 100.0..700.0 -> {\n                restartSamples=0\n                state.engineRunning=false\n                state.engineState="RESTARTING"\n            }\n            else -> {\n                restartSamples=0\n                state.engineRunning=false\n                state.engineState="VEHICLE_OFF"\n            }\n        }\n        if(state.engineState=="START_STOP_OFF" && startStopEnteredAt!=null && now-startStopEnteredAt!! > 120000L){\n            state.engineState="VEHICLE_OFF"\n        }\n    }\n\n    private fun processEvents(){
+    private fun updateEngineState(){
+        val now=System.currentTimeMillis()
+        val rpm=state.rpm?:0.0
+        val speed=state.speedKmh?:0
+        when {
+            rpm > 700.0 -> {
+                restartSamples++
+                state.engineRunning=true
+                state.engineState=if(restartSamples>=2) "RUNNING" else "RESTARTING"
+                lastRunningAt=now
+                if(restartSamples>=2) startStopEnteredAt=null
+            }
+            rpm < 100.0 && speed==0 && lastRunningAt!=null && now-lastRunningAt!! <= 120000L -> {
+                restartSamples=0
+                state.engineRunning=false
+                state.engineState="START_STOP_OFF"
+                if(startStopEnteredAt==null) startStopEnteredAt=now
+            }
+            rpm in 100.0..700.0 -> {
+                restartSamples=0
+                state.engineRunning=false
+                state.engineState="RESTARTING"
+            }
+            else -> {
+                restartSamples=0
+                state.engineRunning=false
+                state.engineState="VEHICLE_OFF"
+            }
+        }
+        if(state.engineState=="START_STOP_OFF" && startStopEnteredAt!=null && now-startStopEnteredAt!! > 120000L){
+            state.engineState="VEHICLE_OFF"
+        }
+    }
+
+    private fun processEvents(){
         val current04=state.status04==true&&state.engineRunning
         if(current04&&status04StartedAt==null){status04StartedAt=System.currentTimeMillis();logger.event("STATUS_04_START",state)}
         else if(!current04&&status04StartedAt!=null){val d=(System.currentTimeMillis()-status04StartedAt!!)/1000.0;logger.event("STATUS_04_END",state,d);status04StartedAt=null}
