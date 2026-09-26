@@ -11,6 +11,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <queries><intent><action android:name="android.intent.action.TTS_SERVICE" /></intent></queries>
     <application android:allowBackup="true" android:label="Hyundai DPF Monitor" android:supportsRtl="true" android:theme="@style/Theme.HyundaiDpfMonitor">
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
+        <meta-data
+            android:name="androidx.car.app.minCarApiLevel"
+            android:value="6" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -18,5 +24,13 @@
             </intent-filter>
         </activity>
         <service android:name=".ObdService" android:exported="false" android:foregroundServiceType="connectedDevice" />
+        <service
+            android:name=".DpfCarAppService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService" />
+                <category android:name="androidx.car.app.category.IOT" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>
