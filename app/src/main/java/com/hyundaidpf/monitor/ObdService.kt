@@ -30,6 +30,7 @@ class ObdService : Service() {
         const val ACTION_READ_ECU_INFO="com.hyundaidpf.monitor.READ_ECU_INFO"
         const val ACTION_ECU_INFO="com.hyundaidpf.monitor.ECU_INFO"
         const val ACTION_REQUEST_SNAPSHOT="com.hyundaidpf.monitor.REQUEST_SNAPSHOT"
+        const val ACTION_TEST_ALERT="com.hyundaidpf.monitor.TEST_ALERT"
         const val EXTRA_TEXT="text"; const val EXTRA_LOG_PATH="log_path"
         const val EXTRA_REGEN_ACTIVE="regen_active"; const val EXTRA_ENGINE_RUNNING="engine_running"
         const val EXTRA_CONNECTED="connected"
@@ -42,6 +43,7 @@ class ObdService : Service() {
         const val PREF_CONNECTED="connected"
         const val PREF_REGEN_ACTIVE="regen_active"
         const val PREF_ENGINE_RUNNING="engine_running"
+        const val PREF_REGEN_SOON="regen_soon"
         private const val CHANNEL="obd_logger"; private const val NOTIFICATION_ID=1001
         private const val TARGET_MAC="c5:57:46:dc:6c:e9"; private const val TARGET_NAME="vLinker MC-IOS"
         private val SERVICE_UUID=UUID.fromString("000018f0-0000-1000-8000-00805f9b34fb")
@@ -83,6 +85,13 @@ class ObdService : Service() {
             sendStatus(lastStatus)
             if(loggerReady) broadcastState()
             lastEcuInfo?.let { sendBroadcast(Intent(ACTION_ECU_INFO).setPackage(packageName).putExtra(EXTRA_TEXT,it).putExtra(EXTRA_LOG_PATH,logger.folderPath())) }
+            return START_STICKY
+        }
+        if(intent?.action==ACTION_TEST_ALERT){
+            mainHandler.post{
+                try{tone.startTone(ToneGenerator.TONE_PROP_BEEP2,450)}catch(_:Exception){}
+                mainHandler.postDelayed({speakAlert("Test upozorenja za regeneraciju","regen_test")},650)
+            }
             return START_STICKY
         }
         if(intent?.action==ACTION_READ_ECU_INFO){
@@ -390,7 +399,8 @@ class ObdService : Service() {
         persistUi(
             liveText=text,
             regenActive=shownRegen==true,
-            engineRunning=state.engineRunning
+            engineRunning=state.engineRunning,
+            regenSoon=regenSoon
         )
         sendBroadcast(
             Intent(ACTION_STATE)
@@ -422,7 +432,8 @@ class ObdService : Service() {
         liveText:String?=null,
         ecuText:String?=null,
         regenActive:Boolean?=null,
-        engineRunning:Boolean?=null
+        engineRunning:Boolean?=null,
+        regenSoon:Boolean?=null
     ){
         val e=getSharedPreferences(UI_PREFS,Context.MODE_PRIVATE).edit()
         statusText?.let{e.putString(PREF_STATUS,it)}
@@ -432,6 +443,7 @@ class ObdService : Service() {
         e.putBoolean(PREF_CONNECTED,connected)
         regenActive?.let{e.putBoolean(PREF_REGEN_ACTIVE,it)}
         engineRunning?.let{e.putBoolean(PREF_ENGINE_RUNNING,it)}
+        regenSoon?.let{e.putBoolean(PREF_REGEN_SOON,it)}
         e.apply()
     }
     private fun createChannel(){getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL,"OBD logging",NotificationManager.IMPORTANCE_LOW))}
