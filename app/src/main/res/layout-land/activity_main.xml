@@ -116,6 +116,15 @@
                 android:orientation="vertical">
 
                 <com.google.android.material.button.MaterialButton
+                    android:id="@+id/testAlertButton"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="42dp"
+                    android:text="TEST ALERT"
+                    android:textStyle="bold"
+                    app:cornerRadius="9dp" />
+
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/ecuInfoButton"
                     style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="match_parent"
