@@ -21,6 +21,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
     private lateinit var ecuInfoButton: Button
+    private lateinit var testAlertButton: Button
     private lateinit var ecuInfo: TextView
 
     private val permissions = registerForActivityResult(
@@ -34,7 +35,8 @@ class MainActivity : AppCompatActivity() {
                     live.text = intent.getStringExtra(ObdService.EXTRA_TEXT) ?: ""
                     updateRegenBanner(
                         intent.getBooleanExtra(ObdService.EXTRA_REGEN_ACTIVE, false),
-                        intent.getBooleanExtra(ObdService.EXTRA_ENGINE_RUNNING, false)
+                        intent.getBooleanExtra(ObdService.EXTRA_ENGINE_RUNNING, false),
+                        intent.getBooleanExtra(ObdService.EXTRA_REGEN_SOON, false)
                     )
                 }
 
@@ -53,6 +55,7 @@ class MainActivity : AppCompatActivity() {
                     startButton.isEnabled = !activeOrStarting
                     stopButton.isEnabled = activeOrStarting
                     ecuInfoButton.isEnabled = connected
+        testAlertButton.isEnabled = connected
                 }
             }
 
@@ -74,10 +77,12 @@ class MainActivity : AppCompatActivity() {
         startButton = findViewById(R.id.startButton)
         stopButton = findViewById(R.id.stopButton)
         ecuInfoButton = findViewById(R.id.ecuInfoButton)
+        testAlertButton = findViewById(R.id.testAlertButton)
         ecuInfo = findViewById(R.id.ecuInfo)
 
         stopButton.isEnabled = false
         ecuInfoButton.isEnabled = false
+        testAlertButton.isEnabled = false
 
         startButton.setOnClickListener { requestAndStart() }
 
@@ -87,6 +92,11 @@ class MainActivity : AppCompatActivity() {
             startButton.isEnabled = true
             stopButton.isEnabled = false
             ecuInfoButton.isEnabled = false
+            testAlertButton.isEnabled = false
+        }
+
+        testAlertButton.setOnClickListener {
+            startService(Intent(this, ObdService::class.java).setAction(ObdService.ACTION_TEST_ALERT))
         }
 
         ecuInfoButton.setOnClickListener {
@@ -134,21 +144,25 @@ class MainActivity : AppCompatActivity() {
         val connected = prefs.getBoolean(ObdService.PREF_CONNECTED, false)
         val regenActive = prefs.getBoolean(ObdService.PREF_REGEN_ACTIVE, false)
         val engineRunning = prefs.getBoolean(ObdService.PREF_ENGINE_RUNNING, false)
+        val regenSoon = prefs.getBoolean(ObdService.PREF_REGEN_SOON, false)
 
         if (cachedStatus != null) status.text = cachedStatus
         if (cachedLive != null) live.text = cachedLive
         if (cachedEcu != null) ecuInfo.text = cachedEcu
         if (cachedPath != null) path.text = "Logs: $cachedPath"
-        updateRegenBanner(regenActive, engineRunning)
+        updateRegenBanner(regenActive, engineRunning, regenSoon)
 
         startButton.isEnabled = !connected
         stopButton.isEnabled = connected
         ecuInfoButton.isEnabled = connected
     }
 
-    private fun updateRegenBanner(active: Boolean, running: Boolean) {
+    private fun updateRegenBanner(active: Boolean, running: Boolean, soon: Boolean = false) {
         if (active && running) {
             regenBanner.text = "DPF REGEN ACTIVE"
+            regenBanner.setBackgroundResource(R.drawable.regen_banner_on)
+        } else if (soon && running) {
+            regenBanner.text = "DPF REGEN SOON"
             regenBanner.setBackgroundResource(R.drawable.regen_banner_on)
         } else {
             regenBanner.text = if (running) "DPF REGEN OFF" else "DPF REGEN --"
