@@ -55,7 +55,7 @@ class MainActivity : AppCompatActivity() {
                     startButton.isEnabled = !activeOrStarting
                     stopButton.isEnabled = activeOrStarting
                     ecuInfoButton.isEnabled = connected
-        testAlertButton.isEnabled = connected
+                    testAlertButton.isEnabled = connected
                 }
             }
 
@@ -155,6 +155,7 @@ class MainActivity : AppCompatActivity() {
         startButton.isEnabled = !connected
         stopButton.isEnabled = connected
         ecuInfoButton.isEnabled = connected
+        testAlertButton.isEnabled = connected
     }
 
     private fun updateRegenBanner(active: Boolean, running: Boolean, soon: Boolean = false) {
