@@ -53,10 +53,6 @@ private class DpfCarScreen(carContext: CarContext) : Screen(carContext) {
         prefs.registerOnSharedPreferenceChangeListener(prefListener)
     }
 
-    override fun onDestroy() {
-        prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
-        super.onDestroy()
-    }
 
     override fun onGetTemplate(): Template {
         val connected = prefs.getBoolean(ObdService.PREF_CONNECTED, false)
