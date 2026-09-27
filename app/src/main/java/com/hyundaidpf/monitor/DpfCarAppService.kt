@@ -41,7 +41,7 @@ private class DpfCarScreen(carContext: CarContext) : Screen(carContext) {
 
     private fun requestRefresh() {
         val now = SystemClock.elapsedRealtime()
-        val wait = 750L - (now - lastInvalidateAt)
+        val wait = 1000L - (now - lastInvalidateAt)
         if (wait <= 0L) {
             handler.removeCallbacks(refreshRunnable)
             refreshPending = false
@@ -87,49 +87,71 @@ private class DpfCarScreen(carContext: CarContext) : Screen(carContext) {
             else -> "--"
         }
 
-        val pane = Pane.Builder()
+        val load = compactNumber(live["DPF LOAD"], 1, "%")
+        val soot = compactNumber(live["SOOT"], 2, "g")
+        val dpfTemp = compactNumber(live["DPF UPSTREAM"], 0, "C")
+        val pressure = compactNumber(live["DPF DELTA-P"], 0, "hPa")
+        val rpm = compactNumber(live["RPM"], 0, "rpm")
+        val speed = compactNumber(live["SPEED"], 0, "km/h")
+        val avgDist = compactNumber(live["AVG REGEN DIST"], 0, "km")
+        val avgTime = compactNumber(live["AVG REGEN TIME"], 0, "min")
+
+        val paneBuilder = Pane.Builder()
             .addRow(
                 Row.Builder()
-                    .setTitle("DPF regeneration")
-                    .addText(regenText)
+                    .setTitle("DPF REGEN  $regenText")
+                    .addText("Load $load   •   Soot $soot")
                     .build()
             )
             .addRow(
                 Row.Builder()
-                    .setTitle("DPF load / soot")
-                    .addText("${live["DPF LOAD"] ?: "?"}  |  ${live["SOOT"] ?: "?"}")
+                    .setTitle("DPF")
+                    .addText("$dpfTemp   •   ΔP $pressure")
                     .build()
             )
             .addRow(
                 Row.Builder()
-                    .setTitle("DPF temperature")
-                    .addText(live["DPF UPSTREAM"] ?: "?")
+                    .setTitle("ENGINE")
+                    .addText("$rpm   •   $speed")
                     .build()
             )
             .addRow(
                 Row.Builder()
-                    .setTitle("Engine")
-                    .addText("${live["RPM"] ?: "?"}  |  ${live["SPEED"] ?: "?"}")
+                    .setTitle("LAST REGEN AVERAGE")
+                    .addText("$avgDist   •   $avgTime")
                     .build()
             )
-            .addRow(
+
+        if (!connected) {
+            paneBuilder.addRow(
                 Row.Builder()
-                    .setTitle("Last regen average")
-                    .addText("${live["AVG REGEN DIST"] ?: "?"}  |  ${live["AVG REGEN TIME"] ?: "?"}")
-                    .build()
-            )
-            .addRow(
-                Row.Builder()
-                    .setTitle(if (connected) "Connected" else "Not connected")
+                    .setTitle("NOT CONNECTED")
                     .addText(status)
                     .build()
             )
-            .build()
+        }
 
-        return PaneTemplate.Builder(pane)
+        return PaneTemplate.Builder(paneBuilder.build())
             .setTitle("Hyundai DPF Monitor")
             .setHeaderAction(Action.APP_ICON)
             .build()
+    }
+
+    private fun compactNumber(value: String?, decimals: Int, unit: String): String {
+        if (value.isNullOrBlank()) return "?"
+        val number = Regex("""-?\d+(?:[.,]\d+)?""")
+            .find(value)
+            ?.value
+            ?.replace(',', '.')
+            ?.toDoubleOrNull()
+            ?: return value
+
+        val formatted = if (decimals == 0) {
+            kotlin.math.round(number).toLong().toString()
+        } else {
+            "%.${decimals}f".format(java.util.Locale.US, number)
+        }
+        return "$formatted $unit"
     }
 
     private fun parseLive(text: String?): Map<String, String> {
