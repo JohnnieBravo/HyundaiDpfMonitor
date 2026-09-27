@@ -4,13 +4,13 @@ plugins {
 }
 android {
     namespace = "com.hyundaidpf.monitor"
-    compileSdk = 35
+    compileSdk = 36
     defaultConfig {
         applicationId = "com.hyundaidpf.monitor"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 4
-        versionName = "0.3.1"
+        targetSdk = 36
+        versionCode = 5
+        versionName = "0.4.0"
     }
     buildFeatures { viewBinding = false }
     compileOptions {
