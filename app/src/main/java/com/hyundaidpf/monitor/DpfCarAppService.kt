@@ -2,6 +2,9 @@ package com.hyundaidpf.monitor
 
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import androidx.car.app.CarAppService
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
@@ -27,6 +30,28 @@ private class DpfCarSession : Session() {
 
 private class DpfCarScreen(carContext: CarContext) : Screen(carContext) {
     private val prefs = carContext.getSharedPreferences(ObdService.UI_PREFS, Context.MODE_PRIVATE)
+    private val handler = Handler(Looper.getMainLooper())
+    private var lastInvalidateAt = 0L
+    private var refreshPending = false
+    private val refreshRunnable = Runnable {
+        refreshPending = false
+        lastInvalidateAt = SystemClock.elapsedRealtime()
+        invalidate()
+    }
+
+    private fun requestRefresh() {
+        val now = SystemClock.elapsedRealtime()
+        val wait = 750L - (now - lastInvalidateAt)
+        if (wait <= 0L) {
+            handler.removeCallbacks(refreshRunnable)
+            refreshPending = false
+            lastInvalidateAt = now
+            invalidate()
+        } else if (!refreshPending) {
+            refreshPending = true
+            handler.postDelayed(refreshRunnable, wait)
+        }
+    }
 
     private val prefListener =
         android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -38,7 +63,7 @@ private class DpfCarScreen(carContext: CarContext) : Screen(carContext) {
                 key == ObdService.PREF_ENGINE_RUNNING ||
                 key == ObdService.PREF_REGEN_SOON
             ) {
-                invalidate()
+                requestRefresh()
             }
         }
 
