@@ -2,7 +2,6 @@ package com.hyundaidpf.monitor
 
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ApplicationInfo
 import androidx.car.app.CarAppService
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
@@ -16,13 +15,7 @@ import androidx.car.app.validation.HostValidator
 
 class DpfCarAppService : CarAppService() {
     override fun createHostValidator(): HostValidator {
-        return if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
-            HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
-        } else {
-            HostValidator.Builder(this)
-                .addAllowedHosts(androidx.car.app.R.array.hosts_allowlist_sample)
-                .build()
-        }
+        return HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
     }
 
     override fun onCreateSession(): Session = DpfCarSession()
