@@ -36,19 +36,29 @@ private class DpfCarScreen(carContext: CarContext) : Screen(carContext) {
     private var refreshPending = false
     private val refreshRunnable = Runnable {
         refreshPending = false
-        lastInvalidateAt = SystemClock.elapsedRealtime()
-        invalidate()
+        val signature = displaySignature()
+        if (signature != lastRenderedSignature) {
+            lastRenderedSignature = signature
+            lastInvalidateAt = SystemClock.elapsedRealtime()
+            invalidate()
+        }
     }
 
-    private fun requestRefresh() {
-        // Car hosts animate template replacements. Refreshing every second causes
-        // visible cross-fades/ghosting, so only redraw when display values have
-        // materially changed and keep a minimum interval between templates.
+    private fun requestRefresh(immediate: Boolean = false) {
         val signature = displaySignature()
         if (signature == lastRenderedSignature) return
 
+        if (immediate) {
+            handler.removeCallbacks(refreshRunnable)
+            refreshPending = false
+            lastRenderedSignature = signature
+            lastInvalidateAt = SystemClock.elapsedRealtime()
+            invalidate()
+            return
+        }
+
         val now = SystemClock.elapsedRealtime()
-        val wait = 2500L - (now - lastInvalidateAt)
+        val wait = 5000L - (now - lastInvalidateAt)
         if (wait <= 0L) {
             handler.removeCallbacks(refreshRunnable)
             refreshPending = false
@@ -71,17 +81,11 @@ private class DpfCarScreen(carContext: CarContext) : Screen(carContext) {
         // Deliberately quantize rapidly changing values. The phone logger keeps
         // full resolution; this affects only the Android Auto presentation.
         val temp = numeric(live["DPF UPSTREAM"])?.let { kotlin.math.round(it / 5.0) * 5.0 }
-        val pressure = numeric(live["DPF DELTA-P"])?.let { kotlin.math.round(it / 5.0) * 5.0 }
-        val rpm = numeric(live["RPM"])?.let { kotlin.math.round(it / 50.0) * 50.0 }
-        val speed = numeric(live["SPEED"])?.let { kotlin.math.round(it / 2.0) * 2.0 }
-
         return listOf(
             connected, regen, soon, running,
             compactNumber(live["DPF LOAD"], 1, "%"),
             compactNumber(live["SOOT"], 2, "g"),
-            temp, pressure, rpm, speed,
-            compactNumber(live["AVG REGEN DIST"], 0, "km"),
-            compactNumber(live["AVG REGEN TIME"], 0, "min")
+            temp
         ).joinToString("|")
     }
 
@@ -101,7 +105,10 @@ private class DpfCarScreen(carContext: CarContext) : Screen(carContext) {
                 key == ObdService.PREF_ENGINE_RUNNING ||
                 key == ObdService.PREF_REGEN_SOON
             ) {
-                requestRefresh()
+                val urgent = key == ObdService.PREF_REGEN_ACTIVE ||
+                    key == ObdService.PREF_REGEN_SOON ||
+                    key == ObdService.PREF_CONNECTED
+                requestRefresh(urgent)
             }
         }
 
@@ -128,35 +135,23 @@ private class DpfCarScreen(carContext: CarContext) : Screen(carContext) {
         val load = compactNumber(live["DPF LOAD"], 1, "%")
         val soot = compactNumber(live["SOOT"], 2, "g")
         val dpfTemp = compactNumber(live["DPF UPSTREAM"], 0, "C")
-        val pressure = compactNumber(live["DPF DELTA-P"], 0, "hPa")
-        val rpm = compactNumber(live["RPM"], 0, "rpm")
-        val speed = compactNumber(live["SPEED"], 0, "km/h")
-        val avgDist = compactNumber(live["AVG REGEN DIST"], 0, "km")
-        val avgTime = compactNumber(live["AVG REGEN TIME"], 0, "min")
-
         val paneBuilder = Pane.Builder()
             .addRow(
                 Row.Builder()
-                    .setTitle("DPF REGEN  $regenText")
-                    .addText("Load $load   •   Soot $soot")
+                    .setTitle("DPF REGEN")
+                    .addText(regenText)
                     .build()
             )
             .addRow(
                 Row.Builder()
-                    .setTitle("DPF")
-                    .addText("$dpfTemp   •   ΔP $pressure")
+                    .setTitle("LOAD / SOOT")
+                    .addText("$load   •   $soot")
                     .build()
             )
             .addRow(
                 Row.Builder()
-                    .setTitle("ENGINE")
-                    .addText("$rpm   •   $speed")
-                    .build()
-            )
-            .addRow(
-                Row.Builder()
-                    .setTitle("LAST REGEN AVERAGE")
-                    .addText("$avgDist   •   $avgTime")
+                    .setTitle("DPF TEMPERATURE")
+                    .addText(dpfTemp)
                     .build()
             )
 
