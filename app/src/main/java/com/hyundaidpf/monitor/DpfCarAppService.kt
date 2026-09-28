@@ -32,6 +32,7 @@ private class DpfCarScreen(carContext: CarContext) : Screen(carContext) {
     private val prefs = carContext.getSharedPreferences(ObdService.UI_PREFS, Context.MODE_PRIVATE)
     private val handler = Handler(Looper.getMainLooper())
     private var lastInvalidateAt = 0L
+    private var lastRenderedSignature = ""
     private var refreshPending = false
     private val refreshRunnable = Runnable {
         refreshPending = false
@@ -40,17 +41,54 @@ private class DpfCarScreen(carContext: CarContext) : Screen(carContext) {
     }
 
     private fun requestRefresh() {
+        // Car hosts animate template replacements. Refreshing every second causes
+        // visible cross-fades/ghosting, so only redraw when display values have
+        // materially changed and keep a minimum interval between templates.
+        val signature = displaySignature()
+        if (signature == lastRenderedSignature) return
+
         val now = SystemClock.elapsedRealtime()
-        val wait = 1000L - (now - lastInvalidateAt)
+        val wait = 2500L - (now - lastInvalidateAt)
         if (wait <= 0L) {
             handler.removeCallbacks(refreshRunnable)
             refreshPending = false
+            lastRenderedSignature = signature
             lastInvalidateAt = now
             invalidate()
         } else if (!refreshPending) {
             refreshPending = true
             handler.postDelayed(refreshRunnable, wait)
         }
+    }
+
+    private fun displaySignature(): String {
+        val live = parseLive(prefs.getString(ObdService.PREF_LIVE, null))
+        val connected = prefs.getBoolean(ObdService.PREF_CONNECTED, false)
+        val regen = prefs.getBoolean(ObdService.PREF_REGEN_ACTIVE, false)
+        val soon = prefs.getBoolean(ObdService.PREF_REGEN_SOON, false)
+        val running = prefs.getBoolean(ObdService.PREF_ENGINE_RUNNING, false)
+
+        // Deliberately quantize rapidly changing values. The phone logger keeps
+        // full resolution; this affects only the Android Auto presentation.
+        val temp = numeric(live["DPF UPSTREAM"])?.let { kotlin.math.round(it / 5.0) * 5.0 }
+        val pressure = numeric(live["DPF DELTA-P"])?.let { kotlin.math.round(it / 5.0) * 5.0 }
+        val rpm = numeric(live["RPM"])?.let { kotlin.math.round(it / 50.0) * 50.0 }
+        val speed = numeric(live["SPEED"])?.let { kotlin.math.round(it / 2.0) * 2.0 }
+
+        return listOf(
+            connected, regen, soon, running,
+            compactNumber(live["DPF LOAD"], 1, "%"),
+            compactNumber(live["SOOT"], 2, "g"),
+            temp, pressure, rpm, speed,
+            compactNumber(live["AVG REGEN DIST"], 0, "km"),
+            compactNumber(live["AVG REGEN TIME"], 0, "min")
+        ).joinToString("|")
+    }
+
+    private fun numeric(value: String?): Double? {
+        if (value.isNullOrBlank()) return null
+        return Regex("""-?\\d+(?:[.,]\\d+)?""")
+            .find(value)?.value?.replace(',', '.')?.toDoubleOrNull()
     }
 
     private val prefListener =
